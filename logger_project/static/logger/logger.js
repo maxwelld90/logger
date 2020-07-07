@@ -17,7 +17,7 @@
         var bindElementEventListeners = function() {
             /* Bind listeners to all elements we want to track, for the respective event(s) we want to capture */
             for (let loggableElement of root.document.querySelectorAll('*[data-logger-capture]')) {
-                let elementLogEvents = loggableElement.getAttribute('data-logger-capture').split(',');
+                let elementLogEvents = loggableElement.dataset.loggerCapture.split(',');
 
                 for (let eventType of elementLogEvents) {
                     loggableElement.addEventListener(eventType, root.Logger.EventLoggingHandlers.eventCallback);
@@ -27,7 +27,7 @@
 
         var bindDocumentEventListeners = function() {
             /* Bind listeners for the document-level events (i.e. page unload, resizing, etc.) */
-            let documentEvents = root.document.body.getAttribute('data-logger-documentevents');
+            let documentEvents = root.document.body.dataset.loggerDocumentevents;
             
             if (documentEvents) {
                 let documentLogEvents = documentEvents.split(',');
@@ -140,7 +140,7 @@
         };
 
         var isSupported = function() {
-            return !!root.document.querySelector && !root.addEventListener;
+            return !!root.document.querySelectorAll && !root.addEventListener;
         };
 
         _public.previousViewportResolution = {
