@@ -5,79 +5,42 @@
 <html>
     <head>
         <title>Client App Demo</title>
-        <script src="{% static 'logger/logger.js' %}"></script>
-
-        <script>
-            // document.addEventListener("DOMContentLoaded", () => {
-            //     logger.init.setEndpoint('http://127.0.0.1:8000/ws/log/');
-
-            // });
-            
-            document.addEventListener("DOMContentLoaded", () => {
-                logger.init.start();
-            });
-        </script>
-
-        <style type="text/css">
-            body {
-                pointer-events: none;
-            }
-
-            div#logging-area {
-                border: 5px solid red;
-                height: 400px;
-            }
-
-            div#logging-area2 {
-                border: 5px solid green;
-            }
-
-            div.result {
-                margin-top: 10px;
-                border: 5px solid blue;
-            }
-        </style>
     </head>
 
-    <body>
-        <h1>Client App Demo</h1>
-        This is a client app demo for the <code>logger</code> app.
+    <body data-logger-documentevents="resize,blur,focus,visibilitychange">
+        <h1>Library Test</h1>
+        Testing a more formal way to create a JS library.
         
 
         <hr />
 
-        <div id="logging-area" data-loggable="mouseover,mouseout" data-loggable-name="REDBOX">
-            You can enter a query into this box: 
-
-            <form>
-            <input id="textbox" type="text" name="textbox" data-loggable="keydown,mouseover,mouseout,focus,blur" data-loggable-name="QUERYBOX" />
-            <button id="testbutton" data-loggable="click" data-loggable-name="SUBMIT_QUERY" data-loggable-value="{query:#textbox}">Click me!</button>
-
-            </form>
-            
-            <hr />
-
-            <div id="logging-area2" data-loggable="mouseover,mouseout,click" data-loggable-name="GREENBOX">
-                Results area. No result here!
-
-                <ul>
-                    <li>
-
-                    </li>
-                    <li>
-                        Which child number is this?
-                    </li>
-                </ul>
-
-                <div class="result" data-loggable="mouseover,mouseout,click" data-loggable-name="RESULT_VIEW" data-loggable-values="{docid: 123, pos: 1}">This is a result box.</div>
-
-                <div class="result" data-loggable="mouseover,mouseout,click" data-loggable-name="RESULT2">This is a result box.</div>
-
-                <div class="result" data-loggable="mouseover,mouseout,click" data-loggable-name="RESULT3">This is a result box.</div>
-
-            </div>
+        <a href="#">Link 1</a>
+        <a href="#">Link 2</a>
+        <a href="#">Link 3</a>
+        
+        <div style="height: 100px; border: 5px solid red;" data-logger-capture="mouseover,mouseout,click">
+            Some div!
         </div>
 
 
     </body>
+    <script src="{% static 'logger/logger.js' %}"></script>
+    <script>
+        let authData = {
+                'appID': 'theAppID',
+                'flightID': 'theFlightID',
+                'username': 'theUsername',
+            };
+        
+        // Assume that we can get this string from somewhere else, and it is also encrypted.
+        let encodedAuth = btoa(JSON.stringify(authData));
+
+        Logger.init({
+            'bubble': 'custom',
+            'endpoint': '127.0.0.1:8000/ws/log/',
+            'verbose': true,
+            'sendQueueMaxSize': 10,
+            'authString': encodedAuth,
+        });
+    </script>
 </html>

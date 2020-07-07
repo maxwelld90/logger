@@ -1,188 +1,395 @@
 /*
-    Basic Logging Library
-    
+    Logger Prototype
+    Mark II (Using proper JS modules and plugin patterns)
+
     Author: David Maxwell
-    Date: 2020-06-30
+    Date: 2020-07-07
+    Version: 0.2
 */
 
+/* The main Logger singleton object, created on page load. The "core". */
+(function(root) {
+    'use strict';
 
-const logger = {
-    properties: {
-        socket: null,
-        startTimestamp: null,
+    function Logger(root) {
+        var _public = {};
+
+        var bindElementEventListeners = function() {
+            /* Bind listeners to all elements we want to track, for the respective event(s) we want to capture */
+            for (let loggableElement of root.document.querySelectorAll('*[data-logger-capture]')) {
+                let elementLogEvents = loggableElement.getAttribute('data-logger-capture').split(',');
+
+                for (let eventType of elementLogEvents) {
+                    loggableElement.addEventListener(eventType, root.Logger.EventLoggingHandlers.eventCallback);
+                }
+            }
+        };
+
+        var bindDocumentEventListeners = function() {
+            /* Bind listeners for the document-level events (i.e. page unload, resizing, etc.) */
+            let documentEvents = root.document.body.getAttribute('data-logger-documentevents');
+            
+            if (documentEvents) {
+                let documentLogEvents = documentEvents.split(',');
+
+                for (let eventType of documentLogEvents) {
+                    root.document.addEventListener(eventType, root.Logger.EventLoggingHandlers.eventCallback);
+                }
+            }
+
+            /* Add special events, such as when the page is unloaded */
+            root.addEventListener('beforeunload', root.Logger.cleanup);
+        };
         
-        sendQueue: {
-            queue: [],
-            maxQueueSize: 10,
-        }
-    },
+        _public.version = '0.2';
 
-    methods: {
-        logEvent: function(event) {
-            // We need some special logic for hover events so we don't log erroneous events.
-            if (event['type'] == 'mouseover' || event['type'] == 'mouseout') {
-                if (!logger.methods.isParent(this, event.relatedTarget) && event.target == this) {
-                    logger.methods.sendToLogger(event);
+        _public.Helpers = (function() {
+            var _helpers = {}
+
+            _helpers.extend = function(objA, objB) {
+                for (var key in objB) {
+                    if (objB.hasOwnProperty(key)) {
+                        objA[key] = objB[key];
+                    }
+                }
+
+                return objA;
+            }
+
+            return _helpers;
+        })();
+
+        _public.console = function(messageStr) {
+            if (root.Logger.Config.getProperty('verbose')) {
+                var timeDelta = new Date().getTime() - root.Logger.Config.getInitTimestamp();
+                console.log(`LOGGER > ${timeDelta}: ${messageStr}`);
+            }
+        };
+
+        _public.init = function(options) {
+            if (!root.Logger.Config.init(options)) {
+                return false;
+            }
+
+            bindElementEventListeners();
+            bindDocumentEventListeners();
+
+            root.Logger.console('Listening for loggable events');
+            return true;
+        };
+
+        _public.cleanup = function(event) {
+            root.Logger.console('Logger cleanup (shutdown) requested');
+
+            if (event) {
+                root.Logger.EventLoggingHandlers.eventCallback(event);
+            }
+            root.Logger.Dispatcher.cleanup();
+            root.Logger.console('Logger cleanup (shutdown) complete');
+        };
+
+        return _public;
+    }
+
+    if (typeof(root.Logger) === 'undefined') {
+        window.Logger = Logger(root);
+    }
+})(window);
+
+/* The Config plugin, containing all the settings and configuration details for the instance. */
+(function(root) {
+    'use strict';
+
+    if (typeof(root.Logger) === 'undefined') {
+        return;
+    }
+
+    Logger.Config = (function() {
+        var _public = {};
+        var _initTimestamp = new Date().getTime();
+        var _properties = {
+            bubble: false,
+            endpoint: null,
+            verbose: false,
+            sendQueueMaxSize: 10,
+            authString: null,
+        };
+
+        var isSupported = function() {
+            return !!root.document.querySelector && !root.addEventListener;
+        };
+
+        _public.init = function(options) {
+            _properties = root.Logger.Helpers.extend(_properties, options);
+
+            root.Logger.console('Instantiating module');
+
+            if (!isSupported) {
+                return;
+            }
+
+            root.Logger.Dispatcher.init();
+            root.Logger.Dispatcher.connect();
+
+            root.Logger.EventLoggingHandlers.eventCallback({'type': 'loggerstart'});
+            return true;
+        };
+
+        _public.getProperty = function(name) {
+            return _properties[name];
+        };
+
+        _public.getInitTimestamp = function() {
+            return _initTimestamp;
+        };
+
+        return _public;
+    })();
+})(window);
+
+/* The dispatcher, the submodule responsible for handling the connection with the server, and handling the queue of events to log. */
+(function(root) {
+    'use strict';
+
+    if (typeof(root.Logger) === 'undefined') {
+        return;
+    }
+
+    Logger.Dispatcher = (function() {
+        var _public = {};
+        var _socket = null;
+        var _sendQueue = [];
+        var _connectionFailure = false;
+
+        var serverStates = {
+            error: function(dataResponse) {
+                console.log('error with server');
+            },
+
+            handshakeApproved: function(dataResponse) {
+                root.Logger.console('Authentication handshake approved; session can continue');
+                root.Logger.EventLoggingHandlers.eventCallback({'type': 'basicinfo'});
+            },
+
+            handshakeRejected: function(dataResponse) {
+                let errorMessage = dataResponse['errorMessage'];
+                root.Logger.console(`Handshake rejected: ${errorMessage}`);
+                root.Logger.cleanup();
+                _connectionFailure = true;
+            },
+
+            serverStopping: function(dataResponse) {
+                console.log('server stopping');
+                _connectionFailure = true;
+            },
+        };
+
+        var socketEvents = {
+            onopen: function(event) {
+                root.Logger.console('Connection to endpoint established');
+                sendHandshake();
+            },
+
+            onclose: function(event) {
+                root.Logger.console('Connection to endpoint lost; cannot send more data');
+                _connectionFailure = true;
+            },
+
+            onerror: function(event) {
+                root.Logger.console('Connection error');
+            },
+
+            onmessage: function(event) {
+                root.Logger.console('Message received from server');
+                let dataResponse = JSON.parse(event['data']);
+                let state = dataResponse['state'];
+    
+                if (serverStates[state]) {
+                    serverStates[state](dataResponse);
+                    return;
+                }
+    
+                root.Logger.console('Unknown message received from server; ignoring');
+            },
+        };
+
+        var flushQueue = function() {
+            let oldSendQueue = _sendQueue;
+            _sendQueue = [];
+
+            sendSerialisedObject(oldSendQueue);
+            root.Logger.console(`Queue flushed; size was ${oldSendQueue.length}, now ${_sendQueue.length}`);
+        };
+
+        var sendHandshake = function() {
+            root.Logger.console('Authenticating with endpoint');
+
+            let toSend = {
+                'loggerVersion': root.Logger.version,
+                'messageType': 'authenticate',
+                'authString': root.Logger.Config.getProperty('authString'),
+            }
+
+            _socket.send(JSON.stringify(toSend));
+        };
+
+        var sendSerialisedObject = function(payload) {
+            root.Logger.console('Preparing to send payload');
+
+            let toSend = {
+                'loggerVersion': root.Logger.version,
+                'messageType': 'data',
+                'payload': {
+                    'length': payload.length,
+                    'data': payload,
+                },
+            };
+
+            _socket.send(JSON.stringify(toSend));
+        };
+
+        _public.init = function() {};
+
+        _public.connect = function() {
+            const url = root.Logger.Config.getProperty('endpoint');
+            root.Logger.console('Establishing connection');
+
+            _socket = new WebSocket(`ws://${url}`);
+            _socket.onopen = socketEvents.onopen;
+            _socket.onclose = socketEvents.onclose;
+            _socket.onerror = socketEvents.onerror;
+            _socket.onmessage = socketEvents.onmessage;
+        };
+
+        _public.cleanup = function() {
+            flushQueue();
+            _socket.close();
+        };
+
+        _public.send = function(event) {
+            if (_connectionFailure) {
+                if (_sendQueue.length > 0) {
+                    _sendQueue = [];
                 }
 
                 return;
             }
 
-            logger.methods.sendToLogger(event);
-        },
+            const maxQueueSize = root.Logger.Config.getProperty('sendQueueMaxSize');
+            let stringified = JSON.stringify(event);
 
-        isParent: function(refNode, otherNode) {
-            if (otherNode == null) {
-                return false;
+            if (maxQueueSize < 1) {
+                sendSerialisedObject([stringified]);
+                return;
             }
-
-            var parent = otherNode.parentNode;
-
-            do {
-                if (refNode == parent) {
-                    return true;
-                }
-                else {
-                    parent = parent.parentNode;
-                }
-            } while (parent);
-
-            return false;
-        },
-
-        sendToLogger: function(event) {
-            event['eventTimestamp'] = new Date().getTime();
-            const logObject = logger.methods.getLogObject(event);
-
-            logger.properties.sendQueue.queue.push(logObject);
-            console.log(logObject);
             
-            if (logger.properties.sendQueue.queue.length == logger.properties.sendQueue.maxQueueSize) {
-                logger.methods.sendQueue();
+            _sendQueue.push(stringified);
+
+            if (_sendQueue.length == maxQueueSize) {
+                flushQueue();
             }
-        },
+        };
 
-        sendQueue: function() {
-            const sendQueue = logger.properties.sendQueue.queue;
-            logger.properties.sendQueue.queue = [];
+        return _public;
+    })();
+})(window);
 
-            const stringRepresentation = JSON.stringify(sendQueue);
-            logger.properties.socket.send(stringRepresentation);
-        },
+/* Event logging handlers. What do you want to log for the different events that take place? */
+(function(root) {
+    'use strict';
 
-        getLogObject: function(event) {
-            if (logger.eventLogObjectMethods[event['type']] == undefined) {
-                return logger.eventLogObjectMethods.base(event);
+    if (typeof(root.Logger) === 'undefined') {
+        return;
+    }
+
+    Logger.EventLoggingHandlers = (function() {
+        var _public = {};
+
+        _public.eventCallback = function(event) {
+            var toSend = root.Logger.EventLoggingHandlers.base(event);
+            let eventType = event['type'];
+            
+            /* If there is a specific handler for the type of event fired, then we can extend the object. */
+            if (root.Logger.EventLoggingHandlers.hasOwnProperty(eventType)) {
+                let specificObject = root.Logger.EventLoggingHandlers[eventType](event);
+                toSend = root.Logger.Helpers.extend(toSend, specificObject);
             }
+            
+            root.Logger.Dispatcher.send(toSend);
+        };
 
-            return logger.eventLogObjectMethods[event['type']](event);
-        },
+        _public.base = function(event) {
+            var returnObject = {};
+            let eventTimestamp = new Date().getTime();
 
-        cleanup: function(event) {
-            logger.methods.sendQueue();
-            logger.properties.socket.cleanup();
-        },
-    },
-
-    eventLogObjectMethods: {
-        base: function(event) {
-            const baseData = {
-                type: event['type'],
-                elementName: event.target.getAttribute('data-loggable-name'),
-                time: {
-                    delta: event['eventTimestamp'] - logger.properties.startTimestamp,
-                    absolute: event['eventTimestamp'],
-                },
-            }
-
-            return baseData;
-        },
-
-        keydown: function(event) {
-            const base = logger.eventLogObjectMethods.base(event);
-            const keypressObject = {
-                'key': event['key'],
-                'keyCode': event['keyCode'],
-                'repeat': event['repeat'],
-                'values': {
-                    'beforeKeypress': event['target'].value,
-                    'afterKeypress': event['target'].value,
-                    'altKey': event['altKey'],
-                    'shiftKey': event['shiftKey'],
-                },
+            returnObject['type'] = event['type'];
+            returnObject['time'] = {
+                'delta': eventTimestamp - root.Logger.Config.getInitTimestamp(),
+                'absolute': eventTimestamp,
             };
 
-            return {...base, ...keypressObject};
-        },
-
-    },
-
-    init: {
-        start: function() {
-            let loggableElements = document.querySelectorAll('*[data-loggable]');
-            logger.properties.startTimestamp = new Date().getTime();
-            
-            logger.properties.socket = new WebSocket("ws://127.0.0.1:8000/ws/log/"); // Temporary.
-            
-            for (const element of loggableElements) {
-                let elementLogEvents = element.getAttribute('data-loggable').split(',');
-                
-                for (const event of elementLogEvents) {
-                    element.addEventListener(event, logger.methods.logEvent);
-                }
-            }
-
-            logger.properties.sendQueue.queue.push({'START': 'event'});
-
-            // Bind other events (e.g. page unload, resize, unfocus, etc.)
-            window.addEventListener('beforeunload', function(event) {
-                logger.properties.sendQueue.queue.push({'EVENT': 'CLOSE!!'});
-                logger.methods.cleanup();
-            });
-
-            window.addEventListener('visibilitychange', function(event) {
-                console.log('change to' + document.visibilityState);
-
-                if (document.visibilityState == 'hidden') {
-                    logger.properties.sendQueue.queue.push({'CHANGE OF STATE': 'TAB HIDDEN!!'});
-                }
-                else {
-                    logger.properties.sendQueue.queue.push({'CHANGE OF STATE': 'TAB VISIBLE!!'});
-                }
-            });
-
-            window.addEventListener('blur', function(event) {
-                console.log('Lose focus of the window');
-            });
-
-            window.addEventListener('focus', function(event) {
-                console.log('Gain focus of the window');
-            })
-
-            window.addEventListener('resize', function(event) {
-                console.log('Changed to ' + window.innerWidth + 'x' + window.innerHeight);
-            });
-
-            logger.properties.sendQueue.queue.push({'originWidth': window.innerWidth, 'originHeight': window.innerHeight});
-            
-            document.body.style.pointerEvents = 'all';
-            // Window resize? Dimensions at start? Where is cursor at the beginning?
+            return returnObject;
         }
+
+        _public.loggerstart = function(event) {
+            return {
+                startingURL: window.location.href,
+            };
+        };
+
+        _public.basicinfo = function(event) {
+            return {
+                browserDetails: {
+                    vendor: navigator.vendor,
+                    build: navigator.productSub,
+                    agentString: navigator.agentString,
+                    browserLanguage: {
+                        current: navigator.language,
+                        available: navigator.languages,
+                    },
+                },
+                display: {
+                    width: screen.width,
+                    height: screen.height,
+                    depth: screen.colorDepth,
+                    availWidth: screen.availWidth,
+                    availHeight: screen.availHeight,
+                },
+                initialViewport: {
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                },
+            }
+        };
+
+        _public.beforeunload = function(event) {
+            return {
+                type: 'leavepage',
+            };
+        };
+
+        _public.mouseover = function(event) {
+            return {'specific': 'mouseover'};
+        };
+
+
+        return _public;
+    })();
+})(window);
+
+/* Additional plugin for EventLoggingHandlers - template code for adding your own handler functions. */
+(function(root) {
+    'use strict';
+
+    if (typeof(root.Logger) === 'undefined') {
+        return;
     }
 
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-    const socket = new WebSocket('ws://127.0.0.1:8000/ws/log/');
-
-    socket.onmessage = function(e) {
-        const data = JSON.parse(e.data);
-        console.log(data);
+    root.Logger.EventLoggingHandlers.mouseout = function(event) {
+        return {'specific': 'mouseout'};
     }
 
-    let button = document.querySelector('#testbutton');
-
-    button.addEventListener('click', (e) => {
-        socket.send(JSON.stringify({'message': 'hi'}));
-    })
-});
+    root.Logger.EventLoggingHandlers.click = function(event) {
+        return {'specific': 'click'};
+    }
+})(window);
