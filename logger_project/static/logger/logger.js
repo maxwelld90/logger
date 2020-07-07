@@ -33,7 +33,13 @@
                 let documentLogEvents = documentEvents.split(',');
 
                 for (let eventType of documentLogEvents) {
-                    root.document.addEventListener(eventType, root.Logger.EventLoggingHandlers.eventCallback);
+                    let applyTo = root.document; // Default
+
+                    if (root.Logger.EventLoggingHandlers.documentLevelEventMappings[eventType]) {
+                        applyTo = root.Logger.EventLoggingHandlers.documentLevelEventMappings[eventType];
+                    }
+
+                    applyTo.addEventListener(eventType, root.Logger.EventLoggingHandlers.eventCallback);
                 }
             }
 
@@ -54,7 +60,26 @@
                 }
 
                 return objA;
-            }
+            };
+
+            _helpers.isParent = function(refNode, otherNode) {
+                if (otherNode == null) {
+                    return false;
+                }
+
+                var parent = otherNode.parentNode;
+
+                do {
+                    if (refNode == parent) {
+                        return true;
+                    }
+                    else {
+                        parent = parent.parentNode;
+                    }
+                } while (parent);
+
+                return false;
+            };
 
             return _helpers;
         })();
@@ -108,7 +133,6 @@
         var _public = {};
         var _initTimestamp = new Date().getTime();
         var _properties = {
-            bubble: false,
             endpoint: null,
             verbose: false,
             sendQueueMaxSize: 10,
@@ -117,6 +141,11 @@
 
         var isSupported = function() {
             return !!root.document.querySelector && !root.addEventListener;
+        };
+
+        _public.previousViewportResolution = {
+            innerWidth: window.screen.innerWidth,
+            innerHeight: window.screen.innerHeight,
         };
 
         _public.init = function(options) {
@@ -282,7 +311,7 @@
                 sendSerialisedObject([stringified]);
                 return;
             }
-            
+            console.log(stringified);
             _sendQueue.push(stringified);
 
             if (_sendQueue.length == maxQueueSize) {
@@ -305,17 +334,37 @@
     Logger.EventLoggingHandlers = (function() {
         var _public = {};
 
-        _public.eventCallback = function(event) {
-            var toSend = root.Logger.EventLoggingHandlers.base(event);
+        var logEvent = function(event, toSend) {
             let eventType = event['type'];
-            
-            /* If there is a specific handler for the type of event fired, then we can extend the object. */
+            var toSend = root.Logger.EventLoggingHandlers.base(event);
+
             if (root.Logger.EventLoggingHandlers.hasOwnProperty(eventType)) {
                 let specificObject = root.Logger.EventLoggingHandlers[eventType](event);
                 toSend = root.Logger.Helpers.extend(toSend, specificObject);
             }
             
             root.Logger.Dispatcher.send(toSend);
+        }
+
+        _public.eventCallback = function(event, preventBubbling=true) {
+            /* Prevent events bubbling over */
+            if (preventBubbling) {
+                if (!root.Logger.Helpers.isParent(this, event.relatedTarget) && event.target == this) {
+                    logEvent(event);
+                }
+
+                return;
+            }
+
+            logEvent(event);
+        };
+
+        _public.documentLevelEventMappings = {
+            resize: root.document,
+            blur: root.document,
+            focus: root.document,
+            visibilitychange: root.document,
+            resize: root,
         };
 
         _public.base = function(event) {
@@ -380,9 +429,28 @@
         };
 
         _public.mouseover = function(event) {
-            return {'specific': 'mouseover'};
+            return {'mouseover': 'event'};
         };
 
+        _public.resize = function(event) {
+            let newWidth = window.innerWidth;
+            let newHeight = window.innerHeight;
+
+            let oldWidth = root.Logger.Config.previousViewportResolution.innerWidth;
+            let oldHeight = root.Logger.Config.previousViewportResolution.innerHeight;
+
+            root.Logger.Config.previousViewportResolution.innerWidth = newWidth;
+            root.Logger.Config.previousViewportResolution.innerHeight = newHeight;
+            
+            return {
+                viewportAdjustment: {
+                    newWidth: newWidth,
+                    newHeight: newHeight,
+                    oldWidth: oldWidth,
+                    oldHeight: oldHeight,
+                }
+            };
+        }
 
         return _public;
     })();
@@ -397,10 +465,11 @@
     }
 
     root.Logger.EventLoggingHandlers.mouseout = function(event) {
-        return {'specific': 'mouseout'};
-    }
+        return {'mouseout': 'event'};
+    };
 
     root.Logger.EventLoggingHandlers.click = function(event) {
         return {'specific': 'click'};
-    }
+    };
+
 })(window);
