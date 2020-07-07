@@ -338,7 +338,7 @@
         };
 
         _public.basicinfo = function(event) {
-            return {
+            let returnObject = {
                 browserDetails: {
                     vendor: navigator.vendor,
                     build: navigator.productSub,
@@ -359,7 +359,18 @@
                     width: window.innerWidth,
                     height: window.innerHeight,
                 },
+            };
+
+            let appSpecific = root.Logger.Config.getProperty('appSpecific');
+
+            if (appSpecific) {
+                returnObject.appSpecific = appSpecific;
             }
+            else {
+                returnObject.appSpecific = {};
+            }
+
+            return returnObject;
         };
 
         _public.beforeunload = function(event) {

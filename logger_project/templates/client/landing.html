@@ -27,10 +27,15 @@
     <script src="{% static 'logger/logger.js' %}"></script>
     <script>
         let authData = {
-                'appID': 'theAppID',
-                'flightID': 'theFlightID',
-                'username': 'theUsername',
+            'appID': 'theAppID',
+            'flightID': 'theFlightID',
             };
+        
+        let appSpecific = {
+            'condition': 1,
+            'rotation': 3,
+            'interface': 4,
+        }
         
         // Assume that we can get this string from somewhere else, and it is also encrypted.
         let encodedAuth = btoa(JSON.stringify(authData));
@@ -41,6 +46,7 @@
             'verbose': true,
             'sendQueueMaxSize': 10,
             'authString': encodedAuth,
+            'appSpecific': appSpecific,
         });
     </script>
 </html>
