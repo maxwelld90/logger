@@ -312,7 +312,7 @@
                 return;
             }
             
-            //root.Logger.console(`Event logged: ${stringified}`);
+            root.Logger.console(`Event logged: ${stringified}`);
             _sendQueue.push(stringified);
 
             if (_sendQueue.length == maxQueueSize) {
