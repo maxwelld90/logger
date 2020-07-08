@@ -349,13 +349,13 @@
 
         _public.eventCallback = function(event, preventBubbling=true) {
             /* Prevent events bubbling over */
-            if (preventBubbling) {
-                if (!root.Logger.Helpers.isParent(this, event.relatedTarget) && event.target == this) {
-                    logEvent(event);
-                }
+            // if (preventBubbling) {
+            //     if (!root.Logger.Helpers.isParent(this, event.relatedTarget) && event.target == this) {
+            //         logEvent(event);
+            //     }
 
-                return;
-            }
+            //     return;
+            // }
 
             logEvent(event);
         };
